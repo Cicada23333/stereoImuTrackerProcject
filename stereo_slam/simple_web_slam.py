@@ -48,18 +48,30 @@ def create_synthetic_stereo_images(width=2560, height=800):
 
 
 def project_3d_to_2d(points_3d, camera_pose, K, image_shape):
-    """将 3D 点投影到 2D 图像平面"""
+    """将 3D 点投影到 2D 图像平面
+    
+    camera_pose 是从世界坐标系到相机坐标系的变换矩阵 T_wc
+    要将世界坐标系的 3D 点转换到相机坐标系：X_c = R * X_w + t
+    """
     if len(points_3d) == 0:
         return []
     
-    camera_pose_inv = np.linalg.inv(camera_pose)
-    points_cam = (camera_pose_inv[:3, :3] @ points_3d.T + camera_pose_inv[:3, 3:4]).T
+    # camera_pose 是从世界到相机的变换
+    # X_cam = R * X_world + t
+    R = camera_pose[:3, :3]
+    t = camera_pose[:3, 3]
     
+    # 将 3D 点从世界坐标系转换到相机坐标系
+    points_cam = (R @ points_3d.T + t.reshape(3, 1)).T
+    
+    # 只保留在相机前方的点
     valid_mask = points_cam[:, 2] > 0.1
     if not np.any(valid_mask):
         return []
     
     points_cam_valid = points_cam[valid_mask]
+    
+    # 投影到图像平面
     points_2d = (K @ points_cam_valid.T).T
     points_2d = points_2d[:, :2] / points_2d[:, 2:3]
     
