@@ -131,13 +131,28 @@ def frame_generator():
             projected_points = [(int(p[0]), int(p[1]), p[2] if len(p) > 2 else 1.0) for p in projected]
         
         # 创建显示图像 - 左右并排
-        display_img = np.hstack((left_img, right_img))
+        display_img = np.hstack((left_img.copy(), right_img.copy()))
         
-        # 在左图上绘制投影点
+        mid_w = left_img.shape[1]  # 左图的宽度
+        
+        # 计算视差：disparity = (focal_length * baseline) / depth
+        # 从 SLAM 获取相机参数
+        focal_length = slam.focal_length
+        baseline = slam.baseline
+        
+        # 在左图和右图上绘制投影点
         for pt in projected_points:
             x, y = int(pt[0]), int(pt[1])
+            depth = pt[2]
+            
+            # 计算视差
+            if depth > 0:
+                disparity = (focal_length * baseline) / depth
+            else:
+                disparity = 0
+            
+            # 在左图上绘制
             if 0 <= x < left_img.shape[1] and 0 <= y < left_img.shape[0]:
-                depth = pt[2]
                 if depth < 3:
                     color = (0, 255, 0)
                 elif depth < 6:
@@ -145,6 +160,18 @@ def frame_generator():
                 else:
                     color = (0, 100, 255)
                 cv2.circle(display_img, (x, y), 3, color, -1)
+            
+            # 在右图上绘制
+            # 立体校正后，右图的 x 坐标应该是左图 x 坐标减去视差
+            right_x = int(x - disparity)
+            if 0 <= right_x < right_img.shape[1] and 0 <= y < right_img.shape[0]:
+                if depth < 3:
+                    color = (255, 0, 0)  # 右图用蓝色
+                elif depth < 6:
+                    color = (255, 255, 0)
+                else:
+                    color = (100, 100, 255)
+                cv2.circle(display_img, (right_x + mid_w, y), 3, color, -1)
         
         # 添加文本信息
         cam_pos = slam.get_camera_position()
@@ -154,8 +181,7 @@ def frame_generator():
         cv2.putText(display_img, f"Cam: ({cam_pos[0]:.2f}, {cam_pos[1]:.2f}, {cam_pos[2]:.2f})",
                    (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
         
-        mid_w = left_img.shape[1]
-        cv2.putText(display_img, "LEFT (with 3D points)", (10, 30),
+        cv2.putText(display_img, "LEFT", (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         cv2.putText(display_img, "RIGHT", (mid_w + 20, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)

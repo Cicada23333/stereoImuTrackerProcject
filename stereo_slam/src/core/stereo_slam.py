@@ -185,7 +185,7 @@ class StereoSLAM:
             self.camera_pose = pose
             self.logger.info(f"  VO: {num_inliers} inliers from {num_matches_with_map} matches")
         
-        # 5. 更新地图 - 使用改进的更新策略
+        # 5. 更新地图 - 
         new_points_count = 0
         updated_points_count = 0
         
