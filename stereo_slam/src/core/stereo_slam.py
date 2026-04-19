@@ -1,7 +1,7 @@
 """
 主 SLAM 系统模块
 整合所有组件实现立体视觉 SLAM
-支持增量式地图更新和相机位姿估计
+改进版：使用观测驱动的地图更新和加权平均策略
 """
 
 import cv2
@@ -14,7 +14,7 @@ from ..features import FeatureExtractor, StereoMatcher
 from ..geometry import StereoTriangulator, GeometryUtils
 from ..map import Map, KeyFrame
 from ..vo import VisualOdometry
-from .config import SLAMConfig
+from .config import SLAMConfig, CameraConfig
 
 
 # 配置默认日志
@@ -64,6 +64,19 @@ class StereoSLAM:
         # 主点（图像中心）
         self.principal_point = (image_width / 2, image_height / 2)
         
+        # 初始化配置
+        self.config = SLAMConfig(
+            device_id=device_id,
+            debug_mode=debug_mode,
+            camera=CameraConfig(
+                image_width=image_width,
+                image_height=image_height,
+                fov_horizontal=fov_horizontal,
+                baseline=baseline,
+                focal_length=self.focal_length
+            )
+        )
+        
         # 初始化组件
         self.logger = logger or logging.getLogger(f"stereo_slam_{device_id}")
         self.feature_extractor = FeatureExtractor(n_features=2000)
@@ -73,7 +86,11 @@ class StereoSLAM:
             focal_length=self.focal_length,
             principal_point=self.principal_point
         )
-        self.map = Map(device_id=device_id)
+        # 使用配置初始化地图
+        self.map = Map(
+            device_id=device_id,
+            min_observations=self.config.map.min_observations
+        )
         
         # 相机内参矩阵
         self.K = np.array([
@@ -151,12 +168,12 @@ class StereoSLAM:
                 "num_matches": 0
             }
         
-        # 3. 三角测量新的 3D 点
-        triangulated_points = self.triangulator.triangulate_matches(
+        # 3. 三角测量新的 3D 点（带质量检查）
+        triangulated_points = self._triangulate_with_quality_check(
             left_keypoints, right_keypoints, matches
         )
         
-        self.logger.info(f"  Triangulated {len(triangulated_points)} 3D points")
+        self.logger.info(f"  Triangulated {len(triangulated_points)} valid 3D points")
         
         # 4. 使用视觉里程计估计相机位姿（如果已有地图点）
         num_matches_with_map = 0
@@ -168,9 +185,21 @@ class StereoSLAM:
             self.camera_pose = pose
             self.logger.info(f"  VO: {num_inliers} inliers from {num_matches_with_map} matches")
         
-        # 5. 更新地图 - 添加新点或更新已有点
+        # 5. 更新地图 - 使用改进的更新策略
         new_points_count = 0
         updated_points_count = 0
+        
+        # 计算相机移动距离
+        camera_moved = False
+        camera_movement_distance = 0.0
+        if frame_id > 0:
+            # 计算当前相机位置与上一帧的距离
+            current_pos = self.camera_pose[:3, 3]
+            if hasattr(self, '_prev_camera_pos'):
+                camera_movement_distance = np.linalg.norm(current_pos - self._prev_camera_pos)
+                if camera_movement_distance > 0.01:  # 移动超过 1cm
+                    camera_moved = True
+            self._prev_camera_pos = current_pos.copy()
         
         for feature_id, position in triangulated_points:
             left_pt = left_keypoints[feature_id].pt
@@ -180,18 +209,45 @@ class StereoSLAM:
             
             # 检查是否已有相近的 3D 点
             existing_point_id = GeometryUtils.find_nearby_point(
-                position, self.map.points, threshold=0.05
+                position, self.map.points, 
+                threshold=self.config.map.distance_threshold
             )
             
             if existing_point_id is not None:
-                self.map.update_3d_point(
-                    existing_point_id,
-                    position=position,
-                    color=color,
-                    add_observation=frame_id
-                )
-                updated_points_count += 1
+                # 只有当相机移动足够大时才更新点位置
+                # 这样可以避免在相机静止时累积误差
+                if camera_moved:
+                    # 检查新观测与已有位置的差异
+                    existing_pos = np.array(self.map.points[existing_point_id].position)
+                    position_diff = np.linalg.norm(position - existing_pos)
+                    
+                    # 只有当差异在合理范围内才更新
+                    if position_diff < self.config.map.max_observation_distance:
+                        self.map.update_3d_point(
+                            existing_point_id,
+                            position=position,
+                            color=color,
+                            add_observation=frame_id,
+                            use_weighted_average=True,
+                            update_weight=self.config.map.update_weight
+                        )
+                        updated_points_count += 1
+                    else:
+                        # 差异太大，可能是错误匹配，跳过
+                        pass
+                else:
+                    # 相机没有明显移动，只增加观测次数，不更新位置
+                    # 这样可以保持点的稳定性
+                    self.map.update_3d_point(
+                        existing_point_id,
+                        position=None,  # 不更新位置
+                        color=color,
+                        add_observation=frame_id,
+                        use_weighted_average=False
+                    )
+                    updated_points_count += 1
             else:
+                # 添加新点
                 point_id = self.map.add_3d_point(
                     position=position,
                     color=color,
@@ -216,6 +272,12 @@ class StereoSLAM:
         # 7. 更新视觉里程计的缓存
         self._update_vo_cache(left_keypoints, left_descriptors, triangulated_points)
         
+        # 8. 定期清理不可靠的点
+        if frame_id % 50 == 0:
+            culled_count = self.map.cull_insecure_points()
+            if culled_count > 0:
+                self.logger.info(f"  Culled {culled_count} insecure points")
+        
         # 返回结果
         result = {
             "frame_id": frame_id,
@@ -238,6 +300,58 @@ class StereoSLAM:
         
         return result
     
+    def _triangulate_with_quality_check(
+        self,
+        left_keypoints: List[cv2.KeyPoint],
+        right_keypoints: List[cv2.KeyPoint],
+        matches: List[cv2.DMatch]
+    ) -> List[Tuple[int, np.ndarray]]:
+        """
+        带质量检查的三角测量
+        过滤掉不可靠的三角测量结果
+        
+        Args:
+            left_keypoints: 左图特征点
+            right_keypoints: 右图特征点
+            matches: 匹配对列表
+            
+        Returns:
+            高质量的 (feature_id, 3D_position) 列表
+        """
+        results = []
+        
+        for match in matches:
+            left_pt = left_keypoints[match.queryIdx].pt
+            right_pt = right_keypoints[match.trainIdx].pt
+            
+            # 计算视差
+            disparity = left_pt[0] - right_pt[0]
+            
+            # 检查视差范围
+            if disparity < self.config.map.min_disparity:
+                continue
+            if disparity > self.config.map.max_disparity:
+                continue
+            
+            # 三角测量
+            position = self.triangulator.triangulate_point(left_pt, right_pt)
+            
+            if position is None:
+                continue
+            
+            # 检查深度范围
+            depth = np.linalg.norm(position)
+            if depth < self.config.map.min_depth:
+                continue
+            if depth > self.config.map.max_depth:
+                continue
+            
+            # 通过质量检查
+            feature_id = int(match.queryIdx)
+            results.append((feature_id, position))
+        
+        return results
+    
     def _update_vo_cache(
         self, 
         keypoints: List[cv2.KeyPoint], 
@@ -253,7 +367,7 @@ class StereoSLAM:
         valid_indices = [p[0] for p in triangulated_points]
         
         # 限制缓存大小
-        max_cache_size = 500
+        max_cache_size = self.config.map.max_cache_size
         if len(positions) > max_cache_size:
             indices = np.random.choice(len(positions), max_cache_size, replace=False)
             positions = positions[indices]

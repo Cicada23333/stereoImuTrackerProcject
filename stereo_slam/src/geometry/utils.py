@@ -71,7 +71,7 @@ class GeometryUtils:
         
         Args:
             position: 新的 3D 位置
-            existing_points: 已存在的 3D 点字典 {id: {position, ...}}
+            existing_points: 已存在的 3D 点字典 {id: Point3D} 或 {id: {position, ...}}
             threshold: 距离阈值
             
         Returns:
@@ -84,7 +84,14 @@ class GeometryUtils:
         closest_distance = float('inf')
         
         for point_id, point_data in existing_points.items():
-            existing_pos = np.array(point_data["position"])
+            # 支持 Point3D 对象和字典两种格式
+            if hasattr(point_data, 'position'):
+                # Point3D 对象
+                existing_pos = np.array(point_data.position)
+            else:
+                # 字典格式
+                existing_pos = np.array(point_data["position"])
+            
             distance = np.linalg.norm(position - existing_pos)
             
             # 只返回非常接近的点

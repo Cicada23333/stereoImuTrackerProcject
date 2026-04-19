@@ -63,8 +63,30 @@ class VOConfig:
 @dataclass
 class MapConfig:
     """地图配置"""
-    distance_threshold: float = 0.05  # 距离阈值，用于判断是否匹配已有地图点
-    max_cache_size: int = 500  # 最大缓存大小
+    # 点关联配置
+    distance_threshold: float = 0.1  # 距离阈值（更严格）
+    max_observation_distance: float = 0.3  # 最大观测距离（更严格）
+    min_observations: int = 3  # 最小观测次数（需要更多观测才被认为是可靠点）
+    
+    # 三角测量配置 - 收紧限制以提高点质量
+    min_disparity: float = 2.0  # 最小视差（提高以拒绝远距离/噪声点）
+    max_disparity: float = 200.0  # 最大视差（降低以拒绝过近/不可靠点）
+    min_depth: float = 1.0  # 最小深度（米，提高）
+    max_depth: float = 15.0  # 最大深度（米，降低）
+    
+    # 缓存配置
+    max_cache_size: int = 500  # 最大缓存大小（降低）
+    
+    # 点更新配置 - 使用更保守的权重
+    update_weight: float = 0.05  # 新观测的权重（更保守）
+    
+    # 深度稳定性配置
+    depth_variance_threshold: float = 0.05  # 深度方差阈值（更严格）
+    min_stereo_baseline: float = 0.02  # 最小立体基线变化（提高）
+    
+    # 新点质量要求
+    min_reprojection_error: float = 0.5  # 最大重投影误差
+    min_parallax_angle: float = 5.0  # 最小视差角（度）
 
 
 @dataclass
