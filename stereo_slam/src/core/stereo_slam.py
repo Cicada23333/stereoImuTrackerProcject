@@ -10,11 +10,11 @@ from typing import Dict, List, Optional, Tuple
 import logging
 from datetime import datetime
 
-from .feature_extractor import FeatureExtractor
-from .stereo_matcher import StereoMatcher
-from .point_cloud import PointCloud, StereoTriangulator, Point3D
-from .map import Map, KeyFrame
-from .visual_odometry import VisualOdometry
+from ..features import FeatureExtractor, StereoMatcher
+from ..geometry import StereoTriangulator, GeometryUtils
+from ..map import Map, KeyFrame
+from ..vo import VisualOdometry
+from .config import SLAMConfig
 
 
 # 配置默认日志
@@ -74,7 +74,6 @@ class StereoSLAM:
             principal_point=self.principal_point
         )
         self.map = Map(device_id=device_id)
-        self.point_cloud = PointCloud()
         
         # 相机内参矩阵
         self.K = np.array([
@@ -180,7 +179,9 @@ class StereoSLAM:
                 color = left_image[int(left_pt[1]), int(left_pt[0])]
             
             # 检查是否已有相近的 3D 点
-            existing_point_id = self._find_nearby_point(position)
+            existing_point_id = GeometryUtils.find_nearby_point(
+                position, self.map.points, threshold=0.05
+            )
             
             if existing_point_id is not None:
                 self.map.update_3d_point(
@@ -196,7 +197,6 @@ class StereoSLAM:
                     color=color,
                     observation_ids=[frame_id]
                 )
-                self.point_cloud.add_point(position, color, point_id)
                 new_points_count += 1
         
         self.logger.info(f"  Added {new_points_count} new points, updated {updated_points_count} existing points")
@@ -237,33 +237,6 @@ class StereoSLAM:
                                                          left_keypoints, matches)
         
         return result
-    
-    def _find_nearby_point(self, position: np.ndarray, threshold: float = 0.05) -> Optional[int]:
-        """查找附近已存在的 3D 点
-        
-        使用更严格的阈值，只有非常接近的点才被认为是同一个点。
-        这样可以确保新视角下的新特征能够被添加到地图中。
-        """
-        if not self.map.points:
-            return None
-        
-        closest_id = None
-        closest_distance = float('inf')
-        
-        for point_id, point_data in self.map.points.items():
-            existing_pos = np.array(point_data["position"])
-            distance = np.linalg.norm(position - existing_pos)
-            
-            # 只返回非常接近的点
-            if distance < threshold and distance < closest_distance:
-                closest_id = point_id
-                closest_distance = distance
-        
-        # 只有当距离非常近时才认为存在附近点
-        if closest_distance < threshold:
-            return closest_id
-        
-        return None
     
     def _update_vo_cache(
         self, 

@@ -6,24 +6,10 @@
 import cv2
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
 from datetime import datetime
 import json
 
-
-@dataclass
-class KeyFrame:
-    """关键帧数据结构"""
-    frame_id: int
-    timestamp: float
-    left_image: Optional[np.ndarray] = None
-    right_image: Optional[np.ndarray] = None
-    left_keypoints: List[cv2.KeyPoint] = field(default_factory=list)
-    right_keypoints: List[cv2.KeyPoint] = field(default_factory=list)
-    left_descriptors: Optional[np.ndarray] = None
-    right_descriptors: Optional[np.ndarray] = None
-    camera_pose: Optional[np.ndarray] = None  # 4x4 变换矩阵
-    matched_3d_points: List[int] = field(default_factory=list)  # 关联的 3D 点 ID
+from .keyframe import KeyFrame
 
 
 class Map:

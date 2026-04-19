@@ -11,7 +11,7 @@ import threading
 from flask import Flask, Response, jsonify
 import logging
 
-from src.stereo_slam import StereoSLAM
+from src.core.stereo_slam import StereoSLAM
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

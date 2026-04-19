@@ -12,6 +12,53 @@
 - **地图管理**: 管理 3D 点和关键帧
 - **实时处理**: 支持实时摄像头输入和地图更新
 
+## 模块化重构
+
+项目已重构为模块化结构，提高了代码的可维护性和可扩展性：
+
+### 新目录结构
+
+```
+stereo_slam/
+├── src/
+│   ├── __init__.py              # 主模块导出
+│   ├── core/                    # 核心模块
+│   │   ├── __init__.py
+│   │   ├── stereo_slam.py       # 主 SLAM 系统
+│   │   └── config.py            # 配置参数
+│   ├── features/                # 特征处理模块
+│   │   ├── __init__.py
+│   │   ├── extractor.py         # ORB 特征提取
+│   │   ├── matcher.py           # 特征匹配
+│   │   └── tracker.py           # 特征跟踪
+│   ├── geometry/                # 几何计算模块
+│   │   ├── __init__.py
+│   │   ├── triangulation.py     # 三角测量
+│   │   ├── pose_estimation.py   # 位姿估计 (PnP)
+│   │   └── utils.py             # 几何工具函数
+│   ├── map/                     # 地图模块
+│   │   ├── __init__.py
+│   │   ├── map.py               # 地图管理
+│   │   ├── keyframe.py          # 关键帧数据结构
+│   │   └── point.py             # 3D 点数据结构
+│   └── vo/                      # 视觉里程计模块
+│       ├── __init__.py
+│       ├── visual_odometry.py   # 视觉里程计
+│       └── map_updater.py       # 地图更新器
+├── simple_web_slam.py           # Web 可视化测试脚本
+└── README.md                    # 本文档
+```
+
+### 模块说明
+
+| 模块 | 说明 |
+|------|------|
+| `core` | 核心 SLAM 系统，整合所有组件 |
+| `features` | 特征提取、匹配和跟踪功能 |
+| `geometry` | 三角测量、位姿估计等几何计算 |
+| `map` | 3D 地图和关键帧管理 |
+| `vo` | 视觉里程计和地图更新 |
+
 ## 增量式地图更新
 
 当相机移动到新的位置时，系统能够：
@@ -28,27 +75,12 @@
 - Python 3.7+
 - OpenCV 4.x
 - NumPy
+- Flask (仅用于 Web 可视化)
 
 ## 安装
 
 ```bash
-pip install opencv-python numpy
-```
-
-## 项目结构
-
-```
-stereo_slam/
-├── src/
-│   ├── __init__.py          # 模块导出
-│   ├── feature_extractor.py # ORB 特征提取器
-│   ├── stereo_matcher.py    # 立体匹配器
-│   ├── point_cloud.py       # 3D 点云管理
-│   ├── map.py               # 地图管理
-│   ├── visual_odometry.py   # 视觉里程计
-│   └── stereo_slam.py       # 主 SLAM 系统
-├── test_stereo_slam.py      # 测试脚本
-└── README.md                # 本文档
+pip install opencv-python numpy flask
 ```
 
 ## 使用示例
@@ -56,7 +88,7 @@ stereo_slam/
 ### 基本使用
 
 ```python
-from stereo_slam.src.stereo_slam import StereoSLAM
+from src.core.stereo_slam import StereoSLAM
 import cv2
 
 # 创建 SLAM 实例
@@ -89,6 +121,42 @@ slam.save_map("my_map.json")
 slam.visualize_map("map_visualization.png")
 ```
 
+### 使用模块化组件
+
+```python
+# 单独使用特征提取器
+from src.features import FeatureExtractor, StereoMatcher
+
+extractor = FeatureExtractor(n_features=2000)
+matcher = StereoMatcher(ratio_threshold=0.75)
+
+left_keypoints, left_descriptors = extractor.extract(left_image)
+right_keypoints, right_descriptors = extractor.extract(right_image)
+matches = matcher.match_stereo_rectified(
+    left_keypoints, right_keypoints,
+    left_descriptors, right_descriptors
+)
+
+# 使用三角测量
+from src.geometry import StereoTriangulator
+
+triangulator = StereoTriangulator(
+    baseline=0.065,
+    focal_length=1000.0,
+    principal_point=(1280.0, 360.0)
+)
+points_3d = triangulator.triangulate_matches(
+    left_keypoints, right_keypoints, matches
+)
+
+# 使用地图管理
+from src.map import Map
+
+map = Map(device_id=0)
+for feature_id, position in points_3d:
+    map.add_3d_point(position=position)
+```
+
 ### 命令行测试
 
 ```bash
@@ -99,6 +167,15 @@ python test_stereo_slam.py --device 0 --duration 5
 python test_stereo_slam.py --synthetic --duration 5
 ```
 
+### Web 可视化
+
+```bash
+# 启动 Web 服务器
+python simple_web_slam.py
+
+# 打开浏览器访问 http://localhost:9704
+```
+
 ## 参数说明
 
 ### StereoSLAM 初始化参数
@@ -107,6 +184,7 @@ python test_stereo_slam.py --synthetic --duration 5
 |------|------|--------|------|
 | device_id | int | 0 | 摄像头设备 ID |
 | baseline | float | 0.065 | 左右相机基线距离（米） |
+| focal_length | float | 1000.0 | 焦距（像素） |
 | image_width | int | 2560 | 图像宽度 |
 | image_height | int | 720 | 图像高度 |
 | fov_horizontal | float | 100.0 | 水平视场角（度） |
@@ -176,4 +254,4 @@ Y = (v - cy) * Z / f
 
 ## 许可证
 
-MIT License
+GNU AFFERO GENERAL PUBLIC License
