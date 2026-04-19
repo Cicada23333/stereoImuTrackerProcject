@@ -12,6 +12,7 @@ from flask import Flask, Response, jsonify
 import logging
 
 from src.core.stereo_slam import StereoSLAM
+from src.geometry.utils import GeometryUtils
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,43 +46,6 @@ def create_synthetic_stereo_images(width=2560, height=800):
     right_img[:, -30:] = 0
     
     return left_img, right_img
-
-
-def project_3d_to_2d(points_3d, camera_pose, K, image_shape):
-    """将 3D 点投影到 2D 图像平面
-    
-    camera_pose 是从世界坐标系到相机坐标系的变换矩阵 T_wc
-    要将世界坐标系的 3D 点转换到相机坐标系：X_c = R * X_w + t
-    """
-    if len(points_3d) == 0:
-        return []
-    
-    # camera_pose 是从世界到相机的变换
-    # X_cam = R * X_world + t
-    R = camera_pose[:3, :3]
-    t = camera_pose[:3, 3]
-    
-    # 将 3D 点从世界坐标系转换到相机坐标系
-    points_cam = (R @ points_3d.T + t.reshape(3, 1)).T
-    
-    # 只保留在相机前方的点
-    valid_mask = points_cam[:, 2] > 0.1
-    if not np.any(valid_mask):
-        return []
-    
-    points_cam_valid = points_cam[valid_mask]
-    
-    # 投影到图像平面
-    points_2d = (K @ points_cam_valid.T).T
-    points_2d = points_2d[:, :2] / points_2d[:, 2:3]
-    
-    h, w = image_shape[:2]
-    in_image = (
-        (points_2d[:, 0] >= 0) & (points_2d[:, 0] < w) &
-        (points_2d[:, 1] >= 0) & (points_2d[:, 1] < h)
-    )
-    
-    return points_2d[in_image]
 
 
 def frame_generator():
@@ -163,7 +127,7 @@ def frame_generator():
         if len(positions) > 0:
             camera_pose = slam.get_camera_pose()
             K = slam.K.copy()
-            projected = project_3d_to_2d(positions, camera_pose, K, left_img.shape)
+            projected = GeometryUtils.project_3d_to_2d(positions, camera_pose, K, left_img.shape)
             projected_points = [(int(p[0]), int(p[1]), p[2] if len(p) > 2 else 1.0) for p in projected]
         
         # 创建显示图像 - 左右并排
