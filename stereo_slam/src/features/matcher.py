@@ -5,7 +5,7 @@
 
 import cv2
 import numpy as np
-from typing import Tuple, List, Optional
+from typing import Tuple, List
 
 
 class StereoMatcher:
@@ -67,7 +67,10 @@ class StereoMatcher:
         left_keypoints: List[cv2.KeyPoint],
         right_keypoints: List[cv2.KeyPoint],
         left_descriptors: np.ndarray,
-        right_descriptors: np.ndarray
+        right_descriptors: np.ndarray,
+        max_vertical_diff: float = 2.0,
+        min_disparity: float = 1.0,
+        max_disparity: float = 1000.0
     ) -> List[cv2.DMatch]:
         """
         对于校正后的立体图像，进行特征匹配
@@ -84,16 +87,33 @@ class StereoMatcher:
         """
         if left_descriptors is None or right_descriptors is None:
             return []
-            
-        # 使用 BFMatcher 进行匹配
-        matches = self.matcher.match(left_descriptors, right_descriptors)
-        
-        # 过滤低质量匹配
-        if matches:
-            distances = [m.distance for m in matches]
-            median_distance = np.median(distances)
-            
-            # 过滤距离过大的匹配
-            matches = [m for m in matches if m.distance < 1.5 * median_distance]
-            
-        return matches
+        if len(left_descriptors) < 2 or len(right_descriptors) < 2:
+            return []
+
+        if self.cross_check:
+            matches = self.matcher.match(left_descriptors, right_descriptors)
+        else:
+            raw_matches = self.matcher.knnMatch(left_descriptors, right_descriptors, k=2)
+            matches = []
+            for pair in raw_matches:
+                if len(pair) < 2:
+                    continue
+                m, n = pair
+                if m.distance < self.ratio_threshold * n.distance:
+                    matches.append(m)
+
+        filtered_matches = []
+        for match in matches:
+            left_pt = left_keypoints[match.queryIdx].pt
+            right_pt = right_keypoints[match.trainIdx].pt
+            disparity = left_pt[0] - right_pt[0]
+            vertical_diff = abs(left_pt[1] - right_pt[1])
+
+            if vertical_diff > max_vertical_diff:
+                continue
+            if disparity < min_disparity or disparity > max_disparity:
+                continue
+            filtered_matches.append(match)
+
+        filtered_matches.sort(key=lambda m: m.distance)
+        return filtered_matches

@@ -12,8 +12,6 @@ from flask import Flask, Response, jsonify
 import logging
 
 from src.core.stereo_slam import StereoSLAM
-from src.geometry.utils import GeometryUtils
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -21,6 +19,8 @@ app = Flask(__name__)
 
 # 共享帧缓冲区
 shared_frame = None
+latest_result = None
+processed_frame_count = 0
 frame_lock = threading.Lock()
 running = True
 
@@ -29,7 +29,7 @@ cap = None
 slam = None
 
 
-def create_synthetic_stereo_images(width=2560, height=800):
+def create_synthetic_stereo_images(width=1280, height=720):
     """创建合成的立体图像对"""
     left_img = np.zeros((height, width, 3), dtype=np.uint8)
     np.random.seed(42)
@@ -48,18 +48,42 @@ def create_synthetic_stereo_images(width=2560, height=800):
     return left_img, right_img
 
 
+def create_synthetic_stereo_frame(width=2560, height=720, eye_order="left-right"):
+    """创建一张左右拼接的合成双目图。"""
+    eye_width = width // 2
+    left_img, right_img = create_synthetic_stereo_images(eye_width, height)
+    if eye_order == "right-left":
+        return np.hstack((right_img, left_img))
+    return np.hstack((left_img, right_img))
+
+
+def normalize_camera_frame(frame, expected_width=2560, expected_height=720):
+    """将摄像头实际输出裁剪成库期望的 2560x720 拼接图。"""
+    height, width = frame.shape[:2]
+    if width != expected_width:
+        return None
+    if height == expected_height:
+        return frame
+    if height > expected_height:
+        top = (height - expected_height) // 2
+        return frame[top:top + expected_height, :].copy()
+    return None
+
+
 def frame_generator():
     """后台线程：持续捕获和处理帧"""
-    global cap, slam, shared_frame, running
+    global cap, slam, shared_frame, latest_result, processed_frame_count, running
     
     # 初始化 SLAM
     logger.info("初始化 Stereo SLAM...")
     slam = StereoSLAM(
         device_id=0,
         baseline=0.065,
-        image_width=2560,
-        image_height=800,
+        image_width=1280,
+        image_height=720,
+        stereo_width=2560,
         fov_horizontal=100.0,
+        eye_order="right-left",
         debug_mode=False
     )
     logger.info("SLAM 初始化完成")
@@ -69,7 +93,7 @@ def frame_generator():
         
     # 尝试多种分辨率，从常见到高分辨率
     resolutions = [
-        (2560, 800),   # 双摄拼接
+        (2560, 720),   # 1280x720 左眼 + 1280x720 右眼
     ]
     
     use_synthetic = False
@@ -94,10 +118,9 @@ def frame_generator():
     
     frame_count = 0
     
-    frame_count = 0
-    
     while running:
         use_synthetic_frame = use_synthetic
+        stereo_frame = None
         
         # 获取图像
         if not use_synthetic:
@@ -106,80 +129,61 @@ def frame_generator():
                 use_synthetic_frame = True
             else:
                 h, w = frame.shape[:2]
-                mid = w // 2
-                left_img = frame[:, :mid, :]
-                right_img = frame[:, mid:, :]
-                
-                if h != 800 or mid != 1280:
+                stereo_frame = normalize_camera_frame(frame)
+                if stereo_frame is None:
                     use_synthetic_frame = True
         
         if use_synthetic_frame:
-            left_img, right_img = create_synthetic_stereo_images()
+            stereo_frame = create_synthetic_stereo_frame(eye_order=slam.eye_order)
+
+        left_img, right_img = slam.split_stereo_image(stereo_frame)
         
         # 处理帧
-        result = slam.process_frame(left_img, right_img)
+        result = slam.process_stereo_image(stereo_frame)
         frame_count += 1
         
-        # 获取 3D 点并投影
+        # 获取地图点统计和当前帧真实观测点
         positions = slam.map.get_3d_points_array()
-        projected_points = []
-        
-        if len(positions) > 0:
-            camera_pose = slam.get_camera_pose()
-            K = slam.K.copy()
-            projected = GeometryUtils.project_3d_to_2d(positions, camera_pose, K, left_img.shape)
-            projected_points = [(int(p[0]), int(p[1]), p[2] if len(p) > 2 else 1.0) for p in projected]
+        current_observations = slam.get_last_observations()
         
         # 创建显示图像 - 左右并排
         display_img = np.hstack((left_img.copy(), right_img.copy()))
         
         mid_w = left_img.shape[1]  # 左图的宽度
         
-        # 计算视差：disparity = (focal_length * baseline) / depth
-        # 从 SLAM 获取相机参数
-        focal_length = slam.focal_length
-        baseline = slam.baseline
-        
-        # 在左图和右图上绘制投影点
-        for pt in projected_points:
-            x, y = int(pt[0]), int(pt[1])
-            depth = pt[2]
-            
-            # 计算视差
-            if depth > 0:
-                disparity = (focal_length * baseline) / depth
+        # 当前帧观测直接画在 ORB 匹配特征位置上；这比投影整张历史地图更适合调试“是否绑定到特征”。
+        for obs in current_observations:
+            left_x, left_y = int(obs["left"][0]), int(obs["left"][1])
+            right_x, right_y = int(obs["right"][0]), int(obs["right"][1])
+            depth = float(obs["depth"])
+
+            if depth < 3:
+                left_color = (0, 255, 0)
+                right_color = (255, 0, 0)
+            elif depth < 6:
+                left_color = (0, 255, 255)
+                right_color = (255, 255, 0)
             else:
-                disparity = 0
-            
-            # 在左图上绘制
-            if 0 <= x < left_img.shape[1] and 0 <= y < left_img.shape[0]:
-                if depth < 3:
-                    color = (0, 255, 0)
-                elif depth < 6:
-                    color = (0, 255, 255)
-                else:
-                    color = (0, 100, 255)
-                cv2.circle(display_img, (x, y), 3, color, -1)
-            
-            # 在右图上绘制
-            # 立体校正后，右图的 x 坐标应该是左图 x 坐标减去视差
-            right_x = int(x - disparity)
-            if 0 <= right_x < right_img.shape[1] and 0 <= y < right_img.shape[0]:
-                if depth < 3:
-                    color = (255, 0, 0)  # 右图用蓝色
-                elif depth < 6:
-                    color = (255, 255, 0)
-                else:
-                    color = (100, 100, 255)
-                cv2.circle(display_img, (right_x + mid_w, y), 3, color, -1)
+                left_color = (0, 120, 255)
+                right_color = (120, 120, 255)
+
+            if 0 <= left_x < left_img.shape[1] and 0 <= left_y < left_img.shape[0]:
+                cv2.circle(display_img, (left_x, left_y), 3, left_color, -1)
+                cv2.circle(display_img, (left_x, left_y), 6, left_color, 1)
+
+            if 0 <= right_x < right_img.shape[1] and 0 <= right_y < right_img.shape[0]:
+                cv2.circle(display_img, (right_x + mid_w, right_y), 3, right_color, -1)
+                cv2.circle(display_img, (right_x + mid_w, right_y), 6, right_color, 1)
         
         # 添加文本信息
         cam_pos = slam.get_camera_position()
         
         cv2.putText(display_img, f"3D Points: {len(positions)}", (20, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(display_img, f"Observed: {len(current_observations)}", (20, 55),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
         cv2.putText(display_img, f"Cam: ({cam_pos[0]:.2f}, {cam_pos[1]:.2f}, {cam_pos[2]:.2f})",
-                   (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                   (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
         
         cv2.putText(display_img, "LEFT", (10, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
@@ -189,6 +193,8 @@ def frame_generator():
         # 更新共享帧
         with frame_lock:
             shared_frame = display_img.copy()
+            latest_result = result
+            processed_frame_count = frame_count
         
         time.sleep(0.033)  # 约 30 FPS
 
@@ -287,6 +293,10 @@ def index():
                     <span class="stat-value" id="points">--</span>
                 </div>
                 <div class="stat-item">
+                    <span class="stat-label">Current Observations:</span>
+                    <span class="stat-value" id="observations">--</span>
+                </div>
+                <div class="stat-item">
                     <span class="stat-label">Camera Position:</span>
                     <span class="stat-value" id="campos">--</span>
                 </div>
@@ -305,6 +315,7 @@ def index():
                     .then(data => {
                         document.getElementById('frame').textContent = data.frame_count;
                         document.getElementById('points').textContent = data.num_points;
+                        document.getElementById('observations').textContent = data.num_current_observations || 0;
                         document.getElementById('campos').textContent = 
                             '(' + data.camera_pos[0].toFixed(2) + ', ' + 
                             data.camera_pos[1].toFixed(2) + ', ' + 
@@ -347,9 +358,14 @@ def get_stats():
             positions = slam.map.get_3d_points_array()
             cam_pos = slam.get_camera_position()
             stats = {
-                'frame_count': 0,
+                'frame_count': processed_frame_count,
                 'num_points': len(positions),
-                'camera_pos': cam_pos.tolist()
+                'num_current_observations': (
+                    latest_result.get('num_current_observations', 0)
+                    if latest_result else 0
+                ),
+                'camera_pos': cam_pos.tolist(),
+                'last_result': latest_result
             }
         return jsonify(stats)
 

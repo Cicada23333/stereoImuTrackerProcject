@@ -43,47 +43,44 @@ class PoseEstimator:
         object_points: np.ndarray,
         image_points: np.ndarray
     ) -> Tuple[np.ndarray, int]:
-        """
-        使用 PnP 算法估计相机位姿
         
-        Args:
-            object_points: 3D 点坐标 (N, 3)
-            image_points: 2D 图像点坐标 (N, 2)
-            
-        Returns:
-            camera_pose: 相机位姿 (4x4 矩阵)
-            num_inliers: 内点数量
-        """
-        if len(object_points) < 10 or len(image_points) < 10:
+        # PnP usually needs at least 4-6 points for RANSAC to be effective
+        if len(object_points) < 6:
             return self.camera_pose, 0
         
-        # PnP 求解相机位姿
+        # 1. PnP Solving
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
-            object_points,
-            image_points,
+            object_points.astype(np.float32),
+            image_points.astype(np.float32),
             self.K,
             self.distortion_coeffs,
             iterationsCount=100,
             reprojectionError=self.ransac_reproj_threshold,
-            confidence=0.99
+            confidence=0.99,
+            flags=cv2.SOLVEPNP_ITERATIVE # Stable for most cases
         )
         
-        if not success:
+        if not success or inliers is None:
+            return self.camera_pose, 0
+
+        # 2. Quality Check
+        num_inliers = len(inliers)
+        if num_inliers / len(object_points) < self.min_inliers_ratio:
             return self.camera_pose, 0
         
-        num_inliers = len(inliers) if inliers is not None else 0
-        inliers_ratio = num_inliers / len(object_points)
-        
-        # 转换位姿
+        # 3. Convert rotation vector to matrix
         R, _ = cv2.Rodrigues(rvec)
         
-        # 构建相机位姿
-        new_pose = np.eye(4)
-        new_pose[:3, :3] = R
-        new_pose[:3, 3] = tvec.flatten()
+        # 4. Construct the World-to-Camera Matrix (T_cw)
+        T_cw = np.eye(4)
+        T_cw[:3, :3] = R
+        T_cw[:3, 3] = tvec.flatten()
         
-        # 更新相机位姿（累积）
-        self.camera_pose = self.camera_pose @ new_pose
+        # 5. Calculate Camera-to-World (T_wc) 
+        # This represents the camera's actual position in your map
+        T_wc = np.linalg.inv(T_cw)
+        
+        self.camera_pose = T_wc
         
         return self.camera_pose, num_inliers
     

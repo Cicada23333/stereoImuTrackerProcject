@@ -26,7 +26,7 @@ from .map import Map, KeyFrame, Point3D
 # 视觉里程计模块
 from .vo import VisualOdometry, MapUpdater
 
-__version__ = "2.0.0"
+__version__ = "2.4.0"
 
 __all__ = [
     # 核心

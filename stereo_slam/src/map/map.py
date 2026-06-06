@@ -30,6 +30,7 @@ class Map:
         
         # 3D 点：{id: Point3D}
         self.points: Dict[int, Point3D] = {}
+        self.next_point_id = 0
         
         # 关键帧
         self.keyframes: Dict[int, KeyFrame] = {}
@@ -53,7 +54,8 @@ class Map:
         Returns:
             点的唯一 ID
         """
-        point_id = len(self.points)
+        point_id = self.next_point_id
+        self.next_point_id += 1
         
         point = Point3D(
             position=position.copy(),
@@ -226,6 +228,7 @@ class Map:
             "device_id": self.device_id,
             "num_points": len(self.points),
             "num_keyframes": len(self.keyframes),
+            "frame_counter": self.frame_counter,
             "created_at": self.created_at,
             "last_updated": datetime.now().isoformat()
         }
@@ -256,6 +259,7 @@ class Map:
         
         stats["points"] = points_data
         stats["keyframe_ids"] = list(self.keyframes.keys())
+        stats["next_point_id"] = self.next_point_id
         
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(stats, f, indent=2, ensure_ascii=False)
@@ -287,6 +291,10 @@ class Map:
             
             map_obj.points[point_id] = point
         
-        map_obj.frame_counter = data.get("num_keyframes", 0)
+        map_obj.frame_counter = data.get("frame_counter", data.get("num_keyframes", 0))
+        map_obj.next_point_id = data.get(
+            "next_point_id",
+            max(map_obj.points.keys(), default=-1) + 1
+        )
         
         return map_obj

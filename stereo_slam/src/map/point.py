@@ -27,6 +27,13 @@ class Point3D:
             self.position = np.array(self.position, dtype=np.float64)
         if self.color is not None and not isinstance(self.color, np.ndarray):
             self.color = np.array(self.color, dtype=np.uint8)
+
+    def mark_observed(self, frame_id: int):
+        """记录一次观测，但不改变 3D 位置。"""
+        if frame_id not in self.observation_ids:
+            self.observation_ids.append(frame_id)
+        self.observation_count += 1
+        self.last_seen_frame = frame_id
     
     def add_observation(self, frame_id: int, position: np.ndarray, 
                         weight: float = 1.0, use_weighted_average: bool = True):
@@ -39,29 +46,19 @@ class Point3D:
             weight: 观测权重
             use_weighted_average: 是否使用加权平均
         """
-        # 记录观测
-        if frame_id not in self.observation_ids:
-            self.observation_ids.append(frame_id)
-        self.observation_count += 1
-        self.last_seen_frame = frame_id
+        previous_count = max(self.observation_count, 1)
+        self.mark_observed(frame_id)
         
         if use_weighted_average:
-            # 初始化累积值
-            if self._position_sum is None:
-                self._position_sum = self.position.copy()
-            
-            # 加权平均更新
-            old_weight = self._observation_weight
-            self._observation_weight += weight
-            
-            # 指数移动平均 (EMA)
-            # new_pos = old_pos * (1 - alpha) + new_observation * alpha
-            alpha = weight / (old_weight + weight + 1e-8)
-            self.position = self.position * (1 - alpha) + position * alpha
+            observation_weight = max(float(weight), 1e-6)
+            self.position = (
+                self.position * previous_count + position * observation_weight
+            ) / (previous_count + observation_weight)
         else:
             # 简单平均
             if self._position_sum is None:
-                self._position_sum = self.position.copy()
+                self._position_sum = self.position.copy() * previous_count
+                self._observation_weight = float(previous_count)
             
             self._position_sum += position
             self._observation_weight += 1

@@ -12,14 +12,15 @@ class GeometryUtils:
     """几何工具类"""
     
     @staticmethod
-    def project_3d_to_2d(
+    def project_3d_to_2d_with_depth(
         points_3d: np.ndarray,
         camera_pose: np.ndarray,
         K: np.ndarray,
-        image_shape: Tuple[int, int]
-    ) -> np.ndarray:
+        image_shape: Tuple[int, int],
+        return_indices: bool = False
+    ):
         """
-        将 3D 点投影到 2D 图像平面
+        将世界坐标 3D 点投影到图像平面，并保留相机坐标深度。
         
         Args:
             points_3d: 3D 点坐标 (N, 3)
@@ -28,10 +29,13 @@ class GeometryUtils:
             image_shape: 图像形状
             
         Returns:
-            投影后的 2D 点坐标
+            投影后的 (x, y, z_cam)。return_indices=True 时同时返回原始点索引。
         """
         if len(points_3d) == 0:
-            return np.array([])
+            empty = np.empty((0, 3), dtype=np.float64)
+            if return_indices:
+                return empty, np.empty((0,), dtype=np.int64)
+            return empty
         
         # camera_pose 是从世界到相机的变换
         # X_cam = R * X_world + t
@@ -44,8 +48,12 @@ class GeometryUtils:
         # 只保留在相机前方的点
         valid_mask = points_cam[:, 2] > 0.1
         if not np.any(valid_mask):
-            return np.array([])
+            empty = np.empty((0, 3), dtype=np.float64)
+            if return_indices:
+                return empty, np.empty((0,), dtype=np.int64)
+            return empty
         
+        valid_indices = np.flatnonzero(valid_mask)
         points_cam_valid = points_cam[valid_mask]
         
         # 投影到图像平面
@@ -57,8 +65,25 @@ class GeometryUtils:
             (points_2d[:, 0] >= 0) & (points_2d[:, 0] < w) &
             (points_2d[:, 1] >= 0) & (points_2d[:, 1] < h)
         )
+
+        projected = np.column_stack((points_2d[in_image], points_cam_valid[in_image, 2]))
+        if return_indices:
+            return projected, valid_indices[in_image]
         
-        return points_2d[in_image]
+        return projected
+
+    @staticmethod
+    def project_3d_to_2d(
+        points_3d: np.ndarray,
+        camera_pose: np.ndarray,
+        K: np.ndarray,
+        image_shape: Tuple[int, int]
+    ) -> np.ndarray:
+        """将世界坐标 3D 点投影到 2D 图像平面。"""
+        projected = GeometryUtils.project_3d_to_2d_with_depth(
+            points_3d, camera_pose, K, image_shape
+        )
+        return projected[:, :2]
     
     @staticmethod
     def find_nearby_point(

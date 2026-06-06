@@ -162,12 +162,9 @@ class VisualOdometry:
         new_pose[:3, :3] = R
         new_pose[:3, 3] = tvec.flatten()
         
-        # 更新相机位姿（累积）
-        self.camera_pose = self.camera_pose @ new_pose
-        
-        # 更新历史数据
-        self.prev_keypoints = keypoints
-        self.prev_descriptors = descriptors
+        # new_pose 是“上一帧相机坐标 -> 当前帧相机坐标”的变换。
+        # camera_pose 采用“世界坐标 -> 当前相机坐标”，因此应左乘累积。
+        self.camera_pose = new_pose @ self.camera_pose
         
         return self.camera_pose, len(good_matches), num_inliers
     
