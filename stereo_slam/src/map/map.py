@@ -41,6 +41,7 @@ class Map:
         self,
         position: np.ndarray,
         color: Optional[np.ndarray] = None,
+        descriptor: Optional[np.ndarray] = None,
         observation_ids: Optional[List[int]] = None
     ) -> int:
         """
@@ -60,6 +61,7 @@ class Map:
         point = Point3D(
             position=position.copy(),
             color=color.copy() if color is not None else None,
+            descriptor=descriptor.copy() if descriptor is not None else None,
             observation_count=len(observation_ids) if observation_ids else 1,
             last_seen_frame=observation_ids[-1] if observation_ids else 0,
             observation_ids=observation_ids or []
@@ -73,6 +75,7 @@ class Map:
         point_id: int,
         position: Optional[np.ndarray] = None,
         color: Optional[np.ndarray] = None,
+        descriptor: Optional[np.ndarray] = None,
         add_observation: Optional[int] = None,
         use_weighted_average: bool = True,
         update_weight: float = 0.3
@@ -104,6 +107,9 @@ class Map:
             
         if color is not None:
             point.color = color.copy()
+
+        if descriptor is not None:
+            point.update_descriptor(descriptor)
     
     def remove_3d_point(self, point_id: int):
         """移除 3D 点"""
@@ -219,6 +225,30 @@ class Map:
         if not colors:
             return None
         return np.array(colors, dtype=np.uint8)
+
+    def get_described_points(self) -> Tuple[List[int], np.ndarray, np.ndarray]:
+        point_ids = []
+        positions = []
+        descriptors = []
+
+        for point_id, point in self.points.items():
+            if point.descriptor is None:
+                continue
+            descriptor = np.asarray(point.descriptor, dtype=np.uint8).reshape(-1)
+            if descriptor.size != 32:
+                continue
+            point_ids.append(point_id)
+            positions.append(np.asarray(point.position, dtype=np.float32))
+            descriptors.append(descriptor)
+
+        if not point_ids:
+            return [], np.empty((0, 3), dtype=np.float32), np.empty((0, 32), dtype=np.uint8)
+
+        return (
+            point_ids,
+            np.asarray(positions, dtype=np.float32),
+            np.asarray(descriptors, dtype=np.uint8),
+        )
     
     def get_statistics(self) -> Dict:
         """获取地图统计信息"""
@@ -227,6 +257,7 @@ class Map:
         stats = {
             "device_id": self.device_id,
             "num_points": len(self.points),
+            "num_described_points": sum(1 for point in self.points.values() if point.descriptor is not None),
             "num_keyframes": len(self.keyframes),
             "frame_counter": self.frame_counter,
             "created_at": self.created_at,
@@ -252,6 +283,7 @@ class Map:
             points_data[str(point_id)] = {
                 "position": point.position.tolist(),
                 "color": point.color.tolist() if point.color is not None else None,
+                "descriptor": point.descriptor.tolist() if point.descriptor is not None else None,
                 "observation_count": point.observation_count,
                 "observation_ids": point.observation_ids,
                 "last_seen_frame": point.last_seen_frame
@@ -280,10 +312,16 @@ class Map:
             point_id = int(point_id_str)
             position = np.array(point_data["position"])
             color = np.array(point_data["color"]) if point_data.get("color") else None
+            descriptor = (
+                np.array(point_data["descriptor"], dtype=np.uint8)
+                if point_data.get("descriptor") is not None
+                else None
+            )
             
             point = Point3D(
                 position=position,
                 color=color,
+                descriptor=descriptor,
                 observation_count=point_data.get("observation_count", 1),
                 last_seen_frame=point_data.get("last_seen_frame", 0),
                 observation_ids=point_data.get("observation_ids", [])

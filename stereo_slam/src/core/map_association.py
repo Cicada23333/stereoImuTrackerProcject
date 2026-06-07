@@ -26,6 +26,7 @@ class MapAssociationMixin:
         self,
         triangulated_world_points: List[Tuple[int, np.ndarray]],
         left_keypoints: List[cv2.KeyPoint],
+        left_descriptors: Optional[np.ndarray],
         left_image: np.ndarray,
         frame_id: int,
         camera_moved_significant: bool,
@@ -41,6 +42,9 @@ class MapAssociationMixin:
             color = None
             if 0 <= feature_y < left_image.shape[0] and 0 <= feature_x < left_image.shape[1]:
                 color = left_image[feature_y, feature_x]
+            descriptor = None
+            if left_descriptors is not None and feature_id < len(left_descriptors):
+                descriptor = left_descriptors[feature_id]
 
             existing_point_id = self._find_matching_map_point_2d(
                 feature_x,
@@ -57,17 +61,20 @@ class MapAssociationMixin:
                         existing_point_id,
                         position=position,
                         color=color,
+                        descriptor=descriptor,
                         add_observation=frame_id,
                         use_weighted_average=True,
                         update_weight=self.config.map.update_weight,
                     )
                 else:
                     self.map.points[existing_point_id].mark_observed(frame_id)
+                    self.map.points[existing_point_id].update_descriptor(descriptor)
                 updated_points_count += 1
             else:
                 self.map.add_3d_point(
                     position=position,
                     color=color,
+                    descriptor=descriptor,
                     observation_ids=[frame_id],
                 )
                 new_points_count += 1
@@ -120,4 +127,3 @@ class MapAssociationMixin:
                     if distance < self.config.map.distance_threshold * 3:
                         return point_id
         return None
-

@@ -1,4 +1,5 @@
 from simple_web_slam import create_synthetic_stereo_frame, create_synthetic_stereo_images
+from src.core.localization import StereoMapLocalizer
 from src.core.stereo_slam import StereoSLAM
 import numpy as np
 
@@ -41,3 +42,23 @@ def test_side_by_side_frame_and_batch_update_map(tmp_path):
     loaded = StereoSLAM(debug_mode=False)
     loaded.load_map(map_path)
     assert loaded.map.frame_counter >= 3
+    assert loaded.get_map_statistics()["num_described_points"] > 0
+
+
+def test_saved_map_can_be_loaded_for_read_only_localization(tmp_path):
+    frame = create_synthetic_stereo_frame()
+    map_path = tmp_path / "map.json"
+
+    slam = StereoSLAM(debug_mode=False)
+    slam.process_stereo_image(frame, save_map_path=map_path)
+
+    localizer = StereoMapLocalizer(map_path=map_path)
+    before_stats = localizer.get_map_statistics()
+    result = localizer.localize_stereo_image(frame)
+    after_stats = localizer.get_map_statistics()
+
+    assert before_stats["num_points"] == after_stats["num_points"]
+    assert before_stats["num_described_points"] > 0
+    assert result["success"] is True
+    assert result["num_map_matches"] >= result["num_pnp_inliers"] >= 6
+    assert len(result["matched_map_points"]) > 0

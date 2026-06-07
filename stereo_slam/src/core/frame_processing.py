@@ -98,6 +98,7 @@ class FrameProcessingMixin:
         new_points_count, updated_points_count = self._update_map_points(
             triangulated_world_points,
             left_keypoints,
+            left_descriptors,
             left_image,
             frame_id,
             camera_moved_significant,
@@ -205,4 +206,3 @@ class FrameProcessingMixin:
             "debug_image_shape": debug_img.shape,
             "matched_points_displayed": min(50, len(matches)),
         }
-

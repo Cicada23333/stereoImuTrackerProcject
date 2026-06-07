@@ -13,6 +13,7 @@ class Point3D:
     """3D 点数据结构"""
     position: np.ndarray  # [x, y, z]
     color: Optional[np.ndarray] = None  # [b, g, r]
+    descriptor: Optional[np.ndarray] = None  # ORB descriptor for map localization
     observation_count: int = 0  # 观测次数
     last_seen_frame: int = 0  # 最后看到的帧号
     observation_ids: List[int] = field(default_factory=list)  # 所有观测该点的帧 ID
@@ -27,6 +28,10 @@ class Point3D:
             self.position = np.array(self.position, dtype=np.float64)
         if self.color is not None and not isinstance(self.color, np.ndarray):
             self.color = np.array(self.color, dtype=np.uint8)
+        if self.descriptor is not None and not isinstance(self.descriptor, np.ndarray):
+            self.descriptor = np.array(self.descriptor, dtype=np.uint8)
+        if self.descriptor is not None:
+            self.descriptor = self.descriptor.astype(np.uint8, copy=False).reshape(-1)
 
     def mark_observed(self, frame_id: int):
         """记录一次观测，但不改变 3D 位置。"""
@@ -63,6 +68,11 @@ class Point3D:
             self._position_sum += position
             self._observation_weight += 1
             self.position = self._position_sum / self._observation_weight
+
+    def update_descriptor(self, descriptor: Optional[np.ndarray]):
+        if descriptor is None:
+            return
+        self.descriptor = np.array(descriptor, dtype=np.uint8).reshape(-1).copy()
     
     def get_confidence(self) -> float:
         """

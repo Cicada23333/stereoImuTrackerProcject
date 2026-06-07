@@ -5,5 +5,6 @@
 
 from .stereo_slam import StereoSLAM
 from .config import SLAMConfig
+from .localization import StereoMapLocalizer
 
-__all__ = ["StereoSLAM", "SLAMConfig"]
+__all__ = ["StereoSLAM", "SLAMConfig", "StereoMapLocalizer"]
