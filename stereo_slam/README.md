@@ -1,5 +1,7 @@
 # Stereo SLAM
 
+完整使用说明书见：[docs/user_manual.md](docs/user_manual.md)
+
 基于 OpenCV + ORB 的双目 SLAM 原型库。库的主要输入是一张横向拼接双目图，默认规格为：
 
 - 整图：`2560x720`

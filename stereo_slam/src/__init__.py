@@ -12,6 +12,7 @@ Stereo SLAM 库
 
 # 核心模块
 from .core.stereo_slam import StereoSLAM
+from .core.localization import StereoMapLocalizer
 from .core.config import SLAMConfig, CameraConfig, FeatureConfig, MatchingConfig, VOConfig, MapConfig
 
 # 特征处理模块
@@ -31,6 +32,7 @@ __version__ = "2.4.0"
 __all__ = [
     # 核心
     "StereoSLAM",
+    "StereoMapLocalizer",
     "SLAMConfig",
     "CameraConfig",
     "FeatureConfig",
