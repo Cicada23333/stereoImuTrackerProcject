@@ -6,13 +6,12 @@ import sys
 import time
 from pathlib import Path
 
-import cv2
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core.stereo_slam import StereoSLAM  # noqa: E402
+from src.web.camera import normalize_camera_frame, open_stereo_camera  # noqa: E402
 
 
 def parse_args():
@@ -37,36 +36,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def open_camera(device_id: int, width: int, height: int):
-    cap = cv2.VideoCapture(device_id, cv2.CAP_MSMF)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(device_id)
-
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    cap.set(cv2.CAP_PROP_FPS, 30)
-    return cap
-
-
-def normalize_camera_frame(frame, expected_width: int, expected_height: int):
-    """Crop camera frames to the expected side-by-side input size."""
-    height, width = frame.shape[:2]
-    if width != expected_width:
-        raise ValueError(
-            f"Camera returned width {width}, expected {expected_width}. "
-            "Check camera mode or pass --width."
-        )
-    if height == expected_height:
-        return frame
-    if height > expected_height:
-        top = (height - expected_height) // 2
-        return frame[top:top + expected_height, :].copy()
-    raise ValueError(
-        f"Camera returned height {height}, expected at least {expected_height}. "
-        "Check camera mode or pass --height."
-    )
-
-
 def main():
     args = parse_args()
     eye_width = args.width // 2
@@ -83,7 +52,7 @@ def main():
         debug_mode=False,
     )
 
-    cap = open_camera(args.device, args.width, args.height)
+    cap = open_stereo_camera(args.device, args.width, args.height)
     if not cap.isOpened():
         raise RuntimeError(f"Unable to open camera device {args.device}")
 
@@ -98,7 +67,14 @@ def main():
                 time.sleep(0.05)
                 continue
 
-            frame = normalize_camera_frame(frame, args.width, args.height)
+            raw_height, raw_width = frame.shape[:2]
+            normalized = normalize_camera_frame(frame, args.width, args.height)
+            if normalized is None:
+                raise ValueError(
+                    f"Camera returned {raw_width}x{raw_height}, "
+                    f"expected {args.width}x{args.height} or a taller frame that can be cropped."
+                )
+            frame = normalized
 
             result = slam.process_stereo_image(frame)
             processed += 1
